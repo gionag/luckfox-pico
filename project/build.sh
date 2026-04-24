@@ -2493,10 +2493,20 @@ function post_overlay() {
 
 	for overlay_dir in $RK_POST_OVERLAY; do
 		if [ -d "$tmp_path/overlay/$overlay_dir" ]; then
-			rsync -a --ignore-times --keep-dirlinks --chmod=u=rwX,go=rX --exclude .empty \
+			# --chown=0:0 overrides the -a preserve-owner so overlay
+			# files land as root regardless of the host uid that checked
+			# them out (otherwise rsync -a bakes the builder's uid/gid,
+			# typically 1000/1005, into the final rootfs.img).
+			rsync -a --ignore-times --keep-dirlinks --chown=0:0 --chmod=u=rwX,go=rX --exclude .empty \
 				$tmp_path/overlay/$overlay_dir/* $RK_PROJECT_PACKAGE_ROOTFS_DIR/
 		fi
 	done
+
+	# Final sweep: force every file in the assembled rootfs staging dir
+	# to root:root. Catches anything other than overlays that may have
+	# leaked the builder's uid (earlier buildroot stages, skeleton
+	# copies, etc.) before mkfs.ext4 freezes ownership into rootfs.img.
+	chown -R 0:0 "$RK_PROJECT_PACKAGE_ROOTFS_DIR" 2>/dev/null || true
 }
 
 function __RUN_PRE_BUILD_OEM_SCRIPT() {
