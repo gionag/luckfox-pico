@@ -5,4 +5,4 @@
 # on all LAN VLANs and DNATs it to the local stratum-1 (192.168.200.4
 # et al.) with symmetric masquerade — so replies come back with the
 # pool IP preserved, keeping ntpd happy.
-NTPD_OPTS="-p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org -p 3.pool.ntp.org"
+NTPD_OPTS="-S /usr/sbin/ntpd-hook.sh -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org -p 3.pool.ntp.org"
