@@ -1,0 +1,33 @@
+#!/bin/sh
+# S49ntpd — busybox ntpd client. Replaces the GNU ntp S49ntp that
+# disappears when BR2_PACKAGE_NTP is dropped from buildroot. Servers
+# come from /etc/conf.d/ntpd (NTPD_OPTS), read at start/restart.
+
+DAEMON=/usr/sbin/ntpd
+PIDFILE=/var/run/ntpd.pid
+NTPD_OPTS="-p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org -p 3.pool.ntp.org"
+
+# shellcheck source=/dev/null
+[ -r /etc/conf.d/ntpd ] && . /etc/conf.d/ntpd
+
+start() {
+    printf 'Starting ntpd (busybox): '
+    start-stop-daemon -S -q -m -p "$PIDFILE" -b -x "$DAEMON" -- -N $NTPD_OPTS
+    status=$?
+    [ "$status" -eq 0 ] && echo OK || echo "FAIL ($status)"
+    return "$status"
+}
+
+stop() {
+    printf 'Stopping ntpd: '
+    start-stop-daemon -K -q -p "$PIDFILE"
+    rm -f "$PIDFILE"
+    echo OK
+}
+
+case "$1" in
+    start)   start  ;;
+    stop)    stop   ;;
+    restart|reload) stop; sleep 1; start ;;
+    *) echo "Usage: $0 {start|stop|restart|reload}"; exit 1 ;;
+esac

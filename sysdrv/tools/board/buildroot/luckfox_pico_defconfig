@@ -67,8 +67,11 @@ BR2_PACKAGE_HOST_DTC=y
 BR2_PACKAGE_I2C_TOOLS=y
 
 # ---- networking ----
+# NTP comes from busybox's ntpd applet (enabled in busybox.config),
+# not the GNU ntp package — GNU ntpd 4.2.8p15 is fragile on minimal
+# rigs (strict CVE-2020-13817 aorg check silently drops the first
+# reply and never resyncs).
 BR2_PACKAGE_DHCPCD=y
-BR2_PACKAGE_NTP=y
 BR2_PACKAGE_OPENSSH=y
 BR2_PACKAGE_SOCAT=y
 
