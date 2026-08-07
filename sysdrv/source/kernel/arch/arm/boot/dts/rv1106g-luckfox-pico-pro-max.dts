@@ -105,10 +105,34 @@
 };
 
 /**********I2C**********/
-/* I2C3_M1 */
+/*
+ * I2C3_M0 — the ducoCarrier_r0 trunk. GPIO2_A6 = SCL, GPIO2_A7 = SDA, both
+ * on the right-hand side of the header.
+ *
+ * Two changes from stock, and both are needed:
+ *
+ *   - status okay. Stock leaves i2c3 disabled, so there is no /dev/i2c-* for
+ *     it at all. The node number is NOT probe order: i2c-rk3x.c takes
+ *     adap.nr from of_alias_get_id(of_node, "i2c"), so the aliases block
+ *     fixes this controller at /dev/i2c-3.
+ *
+ *   - pinctrl-0 = i2c3m0_xfer. Stock defaults to the M1 muxing
+ *     (GPIO1_D3/GPIO1_D2), which this board does not route. M0 is
+ *     <2 RK_PA6 5> + <2 RK_PA7 5> in rv1106-pinctrl.dtsi, with
+ *     pcfg_pull_none_smt — pull-none plus Schmitt input, which is what you
+ *     want when the pull-ups are external. They are: the carrier carries a
+ *     4.7 kOhm pair on the 5 V trunk and the PCA9306 has its own on the
+ *     3.3 V side.
+ *
+ * 400 kHz is the ATmega328PB's ceiling, not a tuning choice — the TWI
+ * "Features" list caps data transfer at 400 kHz and there is no Fm+ timing
+ * row in the datasheet. See hardware/ducoCarrier_r0.md.
+ */
 &i2c3 {
-	status = "disabled";
-	clock-frequency = <100000>;
+	status = "okay";
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c3m0_xfer>;
 };
 
 /* I2C1_M1 */
@@ -117,6 +141,57 @@
 	clock-frequency = <100000>;
 };
 
+/*
+ * i2c4 (the camera bus) keeps its M2 muxing and loses its second pinctrl
+ * state, which claims GPIO2_A0 and GPIO2_A1.
+ *
+ * The -ipc.dtsi declares `pinctrl-names = "default", "conifg"` — the typo is
+ * upstream's — with `pinctrl-1 = <&i2c4m0_xfer>`. Nothing selects it: the
+ * pinctrl core applies only "default" at probe, i2c-rk3x.c makes no
+ * pinctrl_lookup_state() call, and no driver in this tree looks that name up.
+ * So the pins were never muxed at run time.
+ *
+ * Deleted anyway, because ducoCarrier_r0 puts the ISP bus on GPIO2_A0 (MOSI)
+ * and GPIO2_A1 (MISO). A latent claim would make that allocation depend on an
+ * argument about driver internals; removing it makes the pins free by
+ * construction, and anyone who later fixes the "conifg" typo cannot silently
+ * take them.
+ */
+&i2c4 {
+	pinctrl-names = "default";
+	/delete-property/ pinctrl-1;
+};
+
+/**********PWM**********/
+/*
+ * The eight AVR clocks. Left `disabled` here — enabling them belongs with the
+ * clock-generator work — but the muxing is narrowed NOW, because the -ipc.dtsi
+ * hands four of these controllers TWO pin sets each and the Luckfox
+ * documentation is explicit that only one may be active per controller:
+ * "PWM functionality can only be used by one pin at a time".
+ *
+ * Left as stock, enabling pwm5/6/10 would ALSO mux GPIO2_B0, GPIO2_B1 and
+ * GPIO1_D1 — three header pins that ducoCarrier_r0 counts as free, and a PWM
+ * carrier appearing on a pin nobody expects.
+ *
+ *   pwm5  -> m2 = GPIO1_C2   (m1 would be GPIO2_B0)
+ *   pwm6  -> m2 = GPIO1_C3   (m1 would be GPIO2_B1)
+ *   pwm10 -> m1 = GPIO1_C6   (m2 would be GPIO1_D1)
+ *
+ * pwm2/3/4/8/9 already declare a single set and need nothing. pwm11 is left
+ * alone: the carrier does not use it.
+ */
+&pwm5 {
+	pinctrl-0 = <&pwm5m2_pins>;
+};
+
+&pwm6 {
+	pinctrl-0 = <&pwm6m2_pins>;
+};
+
+&pwm10 {
+	pinctrl-0 = <&pwm10m1_pins>;
+};
 
 /**********UART**********/
 /* UART3_M1 */
