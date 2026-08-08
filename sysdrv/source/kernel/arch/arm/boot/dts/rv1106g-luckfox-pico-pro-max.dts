@@ -142,6 +142,20 @@
 };
 
 /*
+ * SARADC off. rv1106-luckfox-pico-pro-max-ipc.dtsi turns it on with a
+ * vref-supply, and nothing on this board reads it: the two ADC pins
+ * (GPIO4_C0/C1) are not in the carrier's pin allocation. The IIO and
+ * ROCKCHIP_SARADC drivers are out of the defconfig, so without this the node
+ * would sit okay with no driver to bind it — harmless, but it would be the
+ * only place where the DTS and the kernel config disagree about what this
+ * board has, and that is exactly the kind of disagreement that costs an hour
+ * later.
+ */
+&saradc {
+	status = "disabled";
+};
+
+/*
  * i2c4 (the camera bus) keeps its M2 muxing and loses its second pinctrl
  * state, which claims GPIO2_A0 and GPIO2_A1.
  *

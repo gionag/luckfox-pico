@@ -1,11 +1,74 @@
-# RV1106 kernel defconfig, tuned for the duco-master miner head.
+# RV1106 kernel defconfig for the duco-master miner head on a ducoCarrier_r0.
 #
-# Stripped: camera/ISP, DRM, RGA/RVE/NPU, audio, WiFi, touchscreen,
-# FB_TFT, MTD/UBI, SCSI, NFS, IPv6, Netfilter, IP_SET, WireGuard,
-# MPTCP, Android binder, DEBUG_INFO.
-# Kept: MMC/SD boot, ethernet (stmmac + rk630 phy), USB, I2C, SPI,
-# GPIO, UART/FIQ console, RTC, thermal, watchdog, cpufreq + OPP +
-# PVTM, DT overlays (luckfox-config needs them), TCP BBR + CUBIC.
+# The rule here is: this board does exactly one job, and every subsystem that
+# has no user on it is off. Not "off because it is big" — off because nothing
+# on this image opens it. Where that was checked rather than assumed, the check
+# is named.
+#
+# KEPT, and each of these has a caller:
+#   I2C          i2c3 on the M0 pinmux, the carrier trunk. Baked into the DTB
+#                (see below), chardev for /dev/i2c-3, rk3x for the controller.
+#   Ethernet     stmmac + rk630 phy. The master's only link to the pool, and
+#                the only way in.
+#   MMC/SD       it boots from the SD card.
+#   RTC          Rockchip RTC + the CR2032 on VBAT; S99rtcinit and busybox ntpd.
+#   thermal      per-chip load and throttling decisions read it.
+#   watchdog     an unattended miner head.
+#   cpufreq+OPP+PVTM   the governor is pinned to performance by S10cpu-performance.
+#   FIQ debugger UART console   the ONLY console on this image, and the thing
+#                that tells you why a boot failed. Do not remove it to save
+#                space; the alternative is a card reader and a guess.
+#   GPIO_SYSFS   userspace reads the wired-OR presence INT on GPIO2_A3.
+#   VENDOR_STORAGE   the MAC address lives there.
+#   IKCONFIG_PROC    /proc/config.gz, so the running board can be asked which
+#                config it was actually built with instead of being trusted.
+#   ext4, tmpfs, TCP BBR.
+#
+# STRIPPED, with the reason it has no user:
+#   MODULES      the build produces ZERO .ko files. The module loader was
+#                infrastructure for nothing.
+#   all of USB   host and gadget. Nothing composes a gadget on this image —
+#                rndis.sh is in the SDK but is not referenced by this
+#                BoardConfig and is not in the built rootfs — so usb0 never
+#                appears and CONFIG_USB_CONFIGFS had no caller. Note the USB
+#                maskrom flashing path is NOT lost: that is BootROM, not Linux.
+#   CONFIGFS_FS  its only user was USB_CONFIGFS, which is now gone.
+#   SPI + SFC    the on-board SPI NAND is a fallback BOOT medium, not something
+#                Linux mounts; without MTD/UBI (already stripped) the SFC could
+#                not expose it anyway.
+#   PWM          checked against the built DTB: no pwm node is status okay and
+#                there is no pwm-regulator. The eight PWM clocks this board was
+#                once going to generate were replaced by an Si5351A on the I2C
+#                trunk.
+#   IIO/SARADC   no user; the node is disabled in the DTS to match.
+#   I2C_GPIO     bit-banged I2C. The trunk is the hardware controller.
+#   VFAT + NLS   no FAT partition exists: env/idblock/uboot/boot/userdata/rootfs,
+#                and the last two are ext4.
+#   CMA          nothing reserves from it once camera/DRM/NPU are gone, and it
+#                was already sized 0 MB.
+#   ROCKCHIP_AMP the RV1106's second (RISC-V) core is unused.
+#   LEDs         no user in the master. One line to put back if a status LED
+#                earns its place on the carrier.
+#
+# DEVICE TREE OVERLAYS ARE OFF, and that is the load-bearing part of this file.
+# The peripheral set is fixed by the carrier's copper — one I2C controller — so
+# it is compiled into the base DTB instead of applied at runtime.
+#
+# What that removed is not three symbols. luckfox-config applies pin config by
+# dd-writing the boot partition's FIT, and S99luckfoxconfigload ran it at EVERY
+# boot: flash wear on the partition that makes the board bootable, plus a
+# corruption window if power drops mid-dd. Both that init and
+# S99luckfoxcustomoverlay (which would have done the same on SHUTDOWN the moment
+# /mnt/cfg/dtbo existed) are out of the rootfs overlay.
+#
+# DTC_SYMBOLS is what actually disarms luckfox-config: fdtoverlay needs
+# __symbols__ in the target to resolve &i2c3, so without it the tool cannot
+# apply anything even by hand. Dropping it also halved the DTB (72659 -> 36339 B),
+# because dtc -@ assigns a phandle to every labelled node so an overlay could
+# target it — 348 phandles became 101.
+#
+# The cost, accepted: changing a pin needs a kernel rebuild and an SD rewrite
+# rather than a menu entry.
 
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_KERNEL_XZ=y
@@ -46,16 +109,12 @@ CONFIG_NEON=y
 CONFIG_JUMP_LABEL=y
 # CONFIG_STACKPROTECTOR_STRONG is not set
 # CONFIG_STRICT_KERNEL_RWX is not set
-CONFIG_MODULES=y
-CONFIG_MODULE_UNLOAD=y
 # CONFIG_BLK_DEV_BSG is not set
 CONFIG_PARTITION_ADVANCED=y
 # CONFIG_EFI_PARTITION is not set
 CONFIG_CMDLINE_PARTITION=y
 # CONFIG_MQ_IOSCHED_KYBER is not set
 CONFIG_DEFAULT_MMAP_MIN_ADDR=32768
-CONFIG_CMA=y
-CONFIG_CMA_INACTIVE=y
 CONFIG_NET=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y
@@ -69,9 +128,9 @@ CONFIG_DEFAULT_TCP_CONG="bbr"
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
 # CONFIG_ALLOW_DEV_COREDUMP is not set
-CONFIG_DTC_SYMBOLS=y
-CONFIG_OF_OVERLAY=y
-CONFIG_OF_DTBO=y
+# CONFIG_DTC_SYMBOLS is not set
+# CONFIG_OF_OVERLAY is not set
+# CONFIG_OF_DTBO is not set
 CONFIG_NETDEVICES=y
 # CONFIG_NET_VENDOR_ALACRITECH is not set
 # CONFIG_NET_VENDOR_AMAZON is not set
@@ -127,12 +186,7 @@ CONFIG_HW_RANDOM_ROCKCHIP=y
 # CONFIG_RANDOM_TRUST_BOOTLOADER is not set
 CONFIG_I2C=y
 CONFIG_I2C_CHARDEV=y
-CONFIG_I2C_GPIO=y
 CONFIG_I2C_RK3X=y
-CONFIG_SPI=y
-CONFIG_SPI_ROCKCHIP=y
-CONFIG_SPI_ROCKCHIP_SFC=y
-CONFIG_SPI_SPIDEV=y
 # CONFIG_PTP_1588_CLOCK is not set
 CONFIG_GPIO_SYSFS=y
 CONFIG_POWER_RESET=y
@@ -150,47 +204,17 @@ CONFIG_WATCHDOG=y
 CONFIG_DW_WATCHDOG=y
 CONFIG_REGULATOR_FIXED_VOLTAGE=y
 CONFIG_REGULATOR_GPIO=y
-CONFIG_REGULATOR_PWM=y
 # CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_DRM is not set
 # CONFIG_SOUND is not set
 # CONFIG_HID is not set
 # CONFIG_USB_HID is not set
-CONFIG_USB=y
-CONFIG_USB_OTG=y
-CONFIG_USB_XHCI_HCD=y
-CONFIG_USB_EHCI_HCD=y
-CONFIG_USB_STORAGE=y
-CONFIG_USB_DWC3=y
-CONFIG_USB_SERIAL=y
-CONFIG_USB_SERIAL_CH343=y
-CONFIG_USB_GADGET=y
-CONFIG_U_SERIAL_CONSOLE=y
-CONFIG_USB_CONFIGFS=y
-CONFIG_USB_CONFIGFS_UEVENT=y
-CONFIG_USB_CONFIGFS_SERIAL=y
-CONFIG_USB_CONFIGFS_ACM=y
-CONFIG_USB_CONFIGFS_NCM=y
-CONFIG_USB_CONFIGFS_ECM=y
-CONFIG_USB_CONFIGFS_ECM_SUBSET=y
-CONFIG_USB_CONFIGFS_RNDIS=y
-CONFIG_USB_CONFIGFS_EEM=y
-CONFIG_USB_CONFIGFS_MASS_STORAGE=y
-CONFIG_USB_CONFIGFS_F_FS=y
-CONFIG_USB_CONFIGFS_F_PRINTER=y
-CONFIG_USB_GADGETFS=y
-CONFIG_USB_MASS_STORAGE=y
 CONFIG_MMC=y
 # CONFIG_PWRSEQ_EMMC is not set
 CONFIG_MMC_BLOCK_MINORS=32
 CONFIG_MMC_QUEUE_DEPTH=1
 CONFIG_MMC_DW=y
 CONFIG_MMC_DW_ROCKCHIP=y
-CONFIG_NEW_LEDS=y
-CONFIG_LEDS_CLASS=y
-CONFIG_LEDS_GPIO=y
-CONFIG_LEDS_TRIGGERS=y
-CONFIG_LEDS_TRIGGER_ACTIVITY=y
 CONFIG_RTC_CLASS=y
 CONFIG_RTC_DRV_ROCKCHIP=y
 CONFIG_DMADEVICES=y
@@ -202,7 +226,6 @@ CONFIG_COMMON_CLK_PROCFS=y
 # CONFIG_ARM_ARCH_TIMER_EVTSTREAM is not set
 # CONFIG_IOMMU_SUPPORT is not set
 CONFIG_CPU_RV1106=y
-CONFIG_ROCKCHIP_AMP=y
 CONFIG_ROCKCHIP_CPUINFO=y
 CONFIG_ROCKCHIP_IOMUX=y
 CONFIG_ROCKCHIP_OPP=y
@@ -217,27 +240,16 @@ CONFIG_RK_CONSOLE_THREAD=y
 CONFIG_FIQ_DEBUGGER_FIQ_GLUE=y
 CONFIG_ROCKCHIP_NPOR_POWERGOOD=y
 CONFIG_DEVFREQ_GOV_USERSPACE=y
-CONFIG_EXTCON=y
-CONFIG_IIO=y
-CONFIG_ROCKCHIP_SARADC=y
-CONFIG_PWM=y
-CONFIG_PWM_ROCKCHIP=y
-CONFIG_PHY_ROCKCHIP_INNO_USB2=y
 CONFIG_ROCKCHIP_OTP=y
 CONFIG_EXT4_FS=y
 CONFIG_EXPORTFS_BLOCK_OPS=y
 # CONFIG_DNOTIFY is not set
-CONFIG_VFAT_FS=y
 CONFIG_TMPFS=y
-CONFIG_NLS_CODEPAGE_437=y
-CONFIG_NLS_ISO8859_1=y
 # CONFIG_CRYPTO_HW is not set
 # CONFIG_XZ_DEC_X86 is not set
 # CONFIG_XZ_DEC_POWERPC is not set
 # CONFIG_XZ_DEC_IA64 is not set
 # CONFIG_XZ_DEC_SPARC is not set
-CONFIG_DMA_CMA=y
-CONFIG_CMA_SIZE_MBYTES=0
 CONFIG_PRINTK_TIME=y
 # CONFIG_DEBUG_INFO is not set
 CONFIG_DEBUG_FS=y
@@ -245,3 +257,10 @@ CONFIG_DEBUG_FS=y
 # CONFIG_SCHED_DEBUG is not set
 # CONFIG_FTRACE is not set
 # CONFIG_RUNTIME_TESTING_MENU is not set
+# CONFIG_MODULES is not set
+# CONFIG_USB_SUPPORT is not set
+# CONFIG_SPI is not set
+# CONFIG_PWM is not set
+# CONFIG_IIO is not set
+# CONFIG_NEW_LEDS is not set
+# CONFIG_VFAT_FS is not set
