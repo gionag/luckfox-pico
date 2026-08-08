@@ -156,6 +156,27 @@
 };
 
 /*
+ * The on-board work LED, GPIO3_C6. The vendor dtsi asks for the "activity"
+ * trigger; this board wants "heartbeat", and the reason is the workload.
+ *
+ * ledtrig-activity blinks at a rate proportional to system load. A duco head
+ * pegs the CPU by design — the miner runs flat out — so activity is
+ * effectively solid on, which is indistinguishable from default-state="on" and
+ * from a kernel that has stopped. It carries no information here.
+ *
+ * heartbeat does a double-flash whose period tracks load, so it stays readable
+ * at 100%, and — the part that matters — it is generated in kernel context. A
+ * duco-master that hangs leaves it blinking; only a dead kernel stops it. That
+ * is a liveness signal userspace cannot produce about itself.
+ *
+ * Status LEDs on the carrier are a different job: they carry application
+ * meaning, so the master drives them as plain GPIOs.
+ */
+&work_led {
+	linux,default-trigger = "heartbeat";
+};
+
+/*
  * i2c4 (the camera bus) keeps its M2 muxing and loses its second pinctrl
  * state, which claims GPIO2_A0 and GPIO2_A1.
  *

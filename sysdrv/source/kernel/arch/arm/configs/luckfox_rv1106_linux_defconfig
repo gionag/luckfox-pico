@@ -22,6 +22,25 @@
 #   VENDOR_STORAGE   the MAC address lives there.
 #   IKCONFIG_PROC    /proc/config.gz, so the running board can be asked which
 #                config it was actually built with instead of being trusted.
+#   LEDs         the on-board work LED (GPIO3_C6, declared gpio-leds in
+#                rv1106-luckfox-pico-pro-max-ipc.dtsi) driven by the kernel
+#                HEARTBEAT trigger. This is the one thing the LED class buys
+#                that userspace cannot: a pattern generated in kernel context,
+#                so a hung duco-master leaves it blinking and only a dead
+#                kernel stops it. A userspace-driven LED freezes in whatever
+#                state it was, which looks identical to a working board.
+#
+#                The trigger is HEARTBEAT and not the ACTIVITY the vendor dtsi
+#                asks for, and the reason is this workload: the miner pegs the
+#                CPU by design, and ledtrig-activity blinks at a rate
+#                proportional to load — so at 100% it is effectively solid on,
+#                indistinguishable from default-state="on" and from a crash.
+#                Heartbeat's double-flash stays readable at full load.
+#
+#                Status LEDs on the carrier are a different job and need none
+#                of this: they carry application meaning (pool up, chips
+#                present, reject rate), so the master drives them as plain
+#                GPIOs through GPIO_SYSFS.
 #   ext4, tmpfs, TCP BBR.
 #
 # STRIPPED, with the reason it has no user:
@@ -47,8 +66,6 @@
 #   CMA          nothing reserves from it once camera/DRM/NPU are gone, and it
 #                was already sized 0 MB.
 #   ROCKCHIP_AMP the RV1106's second (RISC-V) core is unused.
-#   LEDs         no user in the master. One line to put back if a status LED
-#                earns its place on the carrier.
 #
 # DEVICE TREE OVERLAYS ARE OFF, and that is the load-bearing part of this file.
 # The peripheral set is fixed by the carrier's copper — one I2C controller — so
@@ -215,6 +232,11 @@ CONFIG_MMC_BLOCK_MINORS=32
 CONFIG_MMC_QUEUE_DEPTH=1
 CONFIG_MMC_DW=y
 CONFIG_MMC_DW_ROCKCHIP=y
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
+CONFIG_LEDS_TRIGGERS=y
+CONFIG_LEDS_TRIGGER_HEARTBEAT=y
 CONFIG_RTC_CLASS=y
 CONFIG_RTC_DRV_ROCKCHIP=y
 CONFIG_DMADEVICES=y
@@ -262,5 +284,4 @@ CONFIG_DEBUG_FS=y
 # CONFIG_SPI is not set
 # CONFIG_PWM is not set
 # CONFIG_IIO is not set
-# CONFIG_NEW_LEDS is not set
 # CONFIG_VFAT_FS is not set
