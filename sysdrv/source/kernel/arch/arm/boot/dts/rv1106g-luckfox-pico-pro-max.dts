@@ -106,8 +106,42 @@
 
 /**********I2C**********/
 /*
- * I2C3_M0 — the ducoCarrier_r0 trunk. GPIO2_A6 = SCL, GPIO2_A7 = SDA, both
- * on the right-hand side of the header.
+ * ducoCarrier_r0 uses THREE I²C buses:
+ *
+ *   i2c3 M1 -> TCA9546A #1, slots 0..3   ("bus A")   SCL pin 10, SDA pin  9
+ *   i2c4 M0 -> TCA9546A #2, slots 4..7   ("bus B")   SCL pin 25, SDA pin 24
+ *   i2c1 M1 -> Si5351A clock generator, direct       SCL pin 17, SDA pin 11
+ *
+ * Only those three controllers reach the 40-pin header, and that is a
+ * constraint rather than a preference. Checked group by group against
+ * rv1106-pinctrl.dtsi and the header pinout:
+ *
+ *   i2c0m0 GPIO1_A3/A4   i2c0m1 GPIO4_A1/A0   i2c0m2 GPIO3_A4/A5   none broken out
+ *   i2c2m0 GPIO1_A0/A1   i2c2m1 GPIO4_A7/A5                        none broken out
+ *   i2c1m1 GPIO2_B0/B1   -> pins 17 / 11    15.24 mm apart, left row
+ *   i2c3m0 GPIO2_A6/A7   -> pins 29 / 34    12.70 mm apart, right row
+ *   i2c3m1 GPIO1_D3/D2   -> pins 10 /  9     2.54 mm apart, left row
+ *   i2c4m0 GPIO2_A1/A0   -> pins 25 / 24     2.54 mm apart, right row
+ *   i2c4m1 GPIO1_C2/C3   -> pins 15 / 16     2.54 mm apart, left row
+ *
+ * So i2c0 and i2c2 are unreachable on this board no matter what is written
+ * here, and three is the maximum.
+ *
+ * **Why the clock gets i2c1 and not a mux.** i2c1m1 is i2c1's only muxing on
+ * the header and its two pins are 15.24 mm apart; every other choice has an
+ * adjacent pair available. Giving i2c1 to the Si5351A puts the one awkward pair
+ * on the shortest run on the board — Y1 sits next to the module — and leaves
+ * both mux buses with adjacent pins AND one per side of the module, so the two
+ * trunks reach their four slots each without crossing.
+ *
+ * At 400 kHz with 4.7 kOhm pull-ups none of this is signal integrity: these are
+ * open-drain single-ended nets with RC-dominated edges around a microsecond.
+ * It is routing tidiness, and the real constraint on that board is distance
+ * from the eight 20 MHz clock nets.
+ *
+ * I2C3_M1 — bus A, the first mux and slots 0..3. GPIO1_D3 = SCL (pin 10),
+ * GPIO1_D2 = SDA (pin 9): adjacent pads on the left-hand row, which is the
+ * whole reason M1 is used here rather than M0.
  *
  * Two changes from stock, and both are needed:
  *
@@ -116,9 +150,10 @@
  *     adap.nr from of_alias_get_id(of_node, "i2c"), so the aliases block
  *     fixes this controller at /dev/i2c-3.
  *
- *   - pinctrl-0 = i2c3m0_xfer. Stock defaults to the M1 muxing
- *     (GPIO1_D3/GPIO1_D2), which this board does not route. M0 is
- *     <2 RK_PA6 5> + <2 RK_PA7 5> in rv1106-pinctrl.dtsi, with
+ *   - pinctrl-0 = i2c3m1_xfer. This IS the stock default for i2c3, so the
+ *     line changes nothing today — it is written down because the board
+ *     depends on it and a silent default is a poor place to keep that. M1 is
+ *     <1 RK_PD3 3> + <1 RK_PD2 3> in rv1106-pinctrl.dtsi with
  *     pcfg_pull_none_smt — pull-none plus Schmitt input, which is what you
  *     want when the pull-ups are external. They are: the carrier carries a
  *     4.7 kOhm pair on the 5 V trunk and the PCA9306 has its own on the
@@ -132,13 +167,40 @@
 	status = "okay";
 	clock-frequency = <400000>;
 	pinctrl-names = "default";
-	pinctrl-0 = <&i2c3m0_xfer>;
+	pinctrl-0 = <&i2c3m1_xfer>;
 };
 
-/* I2C1_M1 */
+/*
+ * I2C1_M1 — the third bus, carrying one device: the Si5351A clock generator at
+ * 0x60. GPIO2_B0 = SCL (pin 17), GPIO2_B1 = SDA (pin 11).
+ *
+ * It goes direct, with no level translator, because the Si5351A's I²C pins do
+ * not tolerate a 5 V pull-up: V_IHI2C max is 3.6 V and the datasheet supports
+ * VDDI2C of 2.25 to 3.63 V only. A dedicated 3.3 V bus is the simplest home for
+ * it, and it keeps clock retunes off the two mux buses.
+ *
+ * Three changes from stock:
+ *
+ *   - status okay. Stock leaves it disabled, so there is no /dev/i2c-1.
+ *     The alias in rv1106.dtsi (`i2c1 = &i2c1`) fixes the node number, which
+ *     is NOT probe order — i2c-rk3x.c takes adap.nr from of_alias_get_id().
+ *
+ *   - 400 kHz instead of 100. The Si5351A takes it, and it keeps all three
+ *     buses on one number.
+ *
+ *   - pinctrl-0 declared explicitly. M1 is already the stock default, so this
+ *     changes nothing today — it is written down because M1 is the ONLY muxing
+ *     of i2c1 that reaches the header (M0 is GPIO0_A5/A6, bank 0, not broken
+ *     out), so there is no fallback if it ever moved.
+ *
+ * Pull-ups are external, a 4.7 kOhm pair on this segment. Nothing else sits on
+ * it, so there is no translator and no second pair.
+ */
 &i2c1 {
-	status = "disabled";
-	clock-frequency = <100000>;
+	status = "okay";
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1m1_xfer>;
 };
 
 /*
@@ -177,24 +239,52 @@
 };
 
 /*
- * i2c4 (the camera bus) keeps its M2 muxing and loses its second pinctrl
- * state, which claims GPIO2_A0 and GPIO2_A1.
+ * i2c4 M0 — bus B, the second mux and slots 4..7. GPIO2_A1 = SCL (pin 25),
+ * GPIO2_A0 = SDA (pin 24): adjacent pads on the right-hand row, so this trunk
+ * leaves the module on the opposite side from bus A and neither has to cross
+ * the board.
  *
- * The -ipc.dtsi declares `pinctrl-names = "default", "conifg"` — the typo is
- * upstream's — with `pinctrl-1 = <&i2c4m0_xfer>`. Nothing selects it: the
- * pinctrl core applies only "default" at probe, i2c-rk3x.c makes no
- * pinctrl_lookup_state() call, and no driver in this tree looks that name up.
- * So the pins were never muxed at run time.
+ * **This file used to protect these two pins, and now spends them.** An earlier
+ * revision deleted a latent claim on GPIO2_A0/A1 — the -ipc.dtsi declares
+ * `pinctrl-names = "default", "conifg"` (the typo is upstream's) with
+ * `pinctrl-1 = <&i2c4m0_xfer>`, which nothing ever selects: the pinctrl core
+ * applies only "default" at probe, i2c-rk3x.c makes no pinctrl_lookup_state()
+ * call, and no driver in this tree looks that name up. The objection was never
+ * to using the pins, it was to a *hidden* claim on them. This is an explicit
+ * one, which is the distinction that block already drew for uart1m1 on
+ * GPIO2_A4/A5. pinctrl-1 is still deleted so the typo'd state cannot come back
+ * and double-claim the same group.
  *
- * Deleted anyway, because ducoCarrier_r0 puts the ISP bus on GPIO2_A0 (MOSI)
- * and GPIO2_A1 (MISO). A latent claim would make that allocation depend on an
- * argument about driver internals; removing it makes the pins free by
- * construction, and anyone who later fixes the "conifg" typo cannot silently
- * take them.
+ * The carrier's MUXRST_A / MUXRST_B — the GPIOs that force both muxes' channels
+ * open when a wedged AVR has jammed a trunk — moved to GPIO1_C0 (pin 12) and
+ * GPIO1_C1 (pin 14), both free, to make room here.
+ *
+ * The two camera sensors the -ipc.dtsi hangs off this bus are switched off.
+ * There is no camera on ducoCarrier_r0, and their addresses — 0x30 and 0x31 —
+ * sit inside the worker range, so leaving them declared on a bus we now drive
+ * is asking for a confusing bus dump. Neither driver is in
+ * luckfox_rv1106_linux_defconfig, so nothing would have bound to them in any
+ * case; this makes the DTS agree with the kernel config rather than relying on
+ * that. Same reasoning as the SARADC block below.
+ *
+ * They are **disabled, not deleted**: csi_dphy's endpoints hold phandles to
+ * &sc3336_out and &mis5001_out, and deleting the nodes breaks those references.
+ * The GPIO they claim, &gpio3 RK_PC5, is off-header and conflicts with nothing.
  */
 &i2c4 {
+	status = "okay";
+	clock-frequency = <400000>;
 	pinctrl-names = "default";
+	pinctrl-0 = <&i2c4m0_xfer>;
 	/delete-property/ pinctrl-1;
+};
+
+&sc3336 {
+	status = "disabled";
+};
+
+&mis5001 {
+	status = "disabled";
 };
 
 /**********PWM**********/
