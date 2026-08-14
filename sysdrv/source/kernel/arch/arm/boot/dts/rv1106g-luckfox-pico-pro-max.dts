@@ -106,11 +106,13 @@
 
 /**********I2C**********/
 /*
- * ducoCarrier_r0 uses THREE I²C buses:
+ * ducoCarrier_r0 drives TWO I²C buses on the header and holds a third in
+ * reserve:
  *
  *   i2c3 M1 -> TCA9546A #1, slots 0..3   ("bus A")   SCL pin 10, SDA pin  9
- *   i2c4 M0 -> TCA9546A #2, slots 4..7   ("bus B")   SCL pin 25, SDA pin 24
- *   i2c1 M1 -> Si5351A clock generator, direct       SCL pin 17, SDA pin 11
+ *   i2c4 M1 -> TCA9546A #2, slots 4..7   ("bus B")   SCL pin 15, SDA pin 16
+ *                + the Si5351A on the 3.3 V side of that trunk
+ *   i2c1 M1 -> nothing on the board, kept free       SCL pin 17, SDA pin 11
  *
  * Only those three controllers reach the 40-pin header, and that is a
  * constraint rather than a preference. Checked group by group against
@@ -118,26 +120,42 @@
  *
  *   i2c0m0 GPIO1_A3/A4   i2c0m1 GPIO4_A1/A0   i2c0m2 GPIO3_A4/A5   none broken out
  *   i2c2m0 GPIO1_A0/A1   i2c2m1 GPIO4_A7/A5                        none broken out
+ *   i2c1m0 GPIO0_A5/A6                                             not broken out
  *   i2c1m1 GPIO2_B0/B1   -> pins 17 / 11    15.24 mm apart, left row
  *   i2c3m0 GPIO2_A6/A7   -> pins 29 / 34    12.70 mm apart, right row
  *   i2c3m1 GPIO1_D3/D2   -> pins 10 /  9     2.54 mm apart, left row
  *   i2c4m0 GPIO2_A1/A0   -> pins 25 / 24     2.54 mm apart, right row
  *   i2c4m1 GPIO1_C2/C3   -> pins 15 / 16     2.54 mm apart, left row
+ *   i2c4m2 GPIO3_C7/D0                                             not broken out
  *
  * So i2c0 and i2c2 are unreachable on this board no matter what is written
  * here, and three is the maximum.
  *
- * **Why the clock gets i2c1 and not a mux.** i2c1m1 is i2c1's only muxing on
- * the header and its two pins are 15.24 mm apart; every other choice has an
- * adjacent pair available. Giving i2c1 to the Si5351A puts the one awkward pair
- * on the shortest run on the board — Y1 sits next to the module — and leaves
- * both mux buses with adjacent pins AND one per side of the module, so the two
- * trunks reach their four slots each without crossing.
+ * **SCL is not always the lower header pin, and i2c4m1 is where that bites.**
+ * Every other pair in the table above puts SCL on the HIGHER pin number —
+ * i2c3m1 is 10/9, i2c1m1 is 17/11, i2c4m0 was 25/24. i2c4m1 runs the other
+ * way: i2c4_scl_m1 is <1 RK_PC2 4> = GPIO1_C2 = pin 15, i2c4_sda_m1 is
+ * <1 RK_PC3 4> = GPIO1_C3 = pin 16. The kernel does not care, but a scope
+ * clipped by pin order does, and so does anyone reading the header from the
+ * outside. Read the group, not the pin numbering.
+ *
+ * **The clock generator no longer gets a controller of its own.** The Si5351A
+ * sits on bus B's 3.3 V segment, upstream of that trunk's PCA9306, sharing
+ * i2c4 with the second mux. What it needed was a bus that never sees a 5 V
+ * pull-up — V_IHI2C max is 3.6 V and VDDI2C is specified 2.25 to 3.63 V — and
+ * the untranslated half of a translated trunk is exactly that. It costs
+ * arbitration the clock was never going to contend for: the Si5351A is written
+ * at bring-up and then left alone. That released i2c1's pair; the i2c1 block
+ * below says why the controller stays enabled anyway.
  *
  * At 400 kHz with 4.7 kOhm pull-ups none of this is signal integrity: these are
  * open-drain single-ended nets with RC-dominated edges around a microsecond.
  * It is routing tidiness, and the real constraint on that board is distance
  * from the eight 20 MHz clock nets.
+ *
+ * Pull-ups, as fitted: a 4.7 kOhm pair on EACH side of each trunk's PCA9306 —
+ * one to 3.3 V, one to 5 V — and a 2.2 kOhm pair to 5 V on every one of the
+ * eight slot segments hanging off the muxes.
  *
  * I2C3_M1 — bus A, the first mux and slots 0..3. GPIO1_D3 = SCL (pin 10),
  * GPIO1_D2 = SDA (pin 9): adjacent pads on the left-hand row, which is the
@@ -150,14 +168,15 @@
  *     adap.nr from of_alias_get_id(of_node, "i2c"), so the aliases block
  *     fixes this controller at /dev/i2c-3.
  *
- *   - pinctrl-0 = i2c3m1_xfer. This IS the stock default for i2c3, so the
- *     line changes nothing today — it is written down because the board
- *     depends on it and a silent default is a poor place to keep that. M1 is
- *     <1 RK_PD3 3> + <1 RK_PD2 3> in rv1106-pinctrl.dtsi with
- *     pcfg_pull_none_smt — pull-none plus Schmitt input, which is what you
- *     want when the pull-ups are external. They are: the carrier carries a
- *     4.7 kOhm pair on the 5 V trunk and the PCA9306 has its own on the
- *     3.3 V side.
+ *   - pinctrl-0 = i2c3m1_xfer, and ONLY that group. This is not a restatement
+ *     of a default. rv1106.dtsi picks m0; the board's own
+ *     rv1106-luckfox-pico-pro-max-ipc.dtsi picks BOTH —
+ *     `pinctrl-0 = <&i2c3m1_xfer &i2c3m0_xfer>` — so left alone this
+ *     controller would mux GPIO2_A6/A7 (header 29 and 34) as a second SCL/SDA
+ *     pair the moment it probes. Naming one group hands those two pads back,
+ *     and the carrier counts them free. M1 is <1 RK_PD3 3> + <1 RK_PD2 3> in
+ *     rv1106-pinctrl.dtsi with pcfg_pull_none_smt — pull-none plus Schmitt
+ *     input, which is what you want when the pull-ups are external. They are.
  *
  * 400 kHz is the ATmega328PB's ceiling, not a tuning choice — the TWI
  * "Features" list caps data transfer at 400 kHz and there is no Fm+ timing
@@ -171,30 +190,43 @@
 };
 
 /*
- * I2C1_M1 — the third bus, carrying one device: the Si5351A clock generator at
- * 0x60. GPIO2_B0 = SCL (pin 17), GPIO2_B1 = SDA (pin 11).
+ * I2C1_M1 — enabled, and deliberately connected to nothing. GPIO2_B0 = SCL
+ * (pin 17), GPIO2_B1 = SDA (pin 11).
  *
- * It goes direct, with no level translator, because the Si5351A's I²C pins do
- * not tolerate a 5 V pull-up: V_IHI2C max is 3.6 V and the datasheet supports
- * VDDI2C of 2.25 to 3.63 V only. A dedicated 3.3 V bus is the simplest home for
- * it, and it keeps clock retunes off the two mux buses.
+ * This bus used to carry the Si5351A; the clock moved onto bus B's 3.3 V
+ * segment. The mux-B reset trigger that briefly borrowed pin 17 moved to
+ * GPIO1_D0 (pin 19). Both pads are therefore free on ducoCarrier_r0 — and they
+ * are kept free on purpose, because i2c1m1 is the LAST complete I²C pair the
+ * header still has. Bus A has taken GPIO1_D2/D3, bus B GPIO1_C2/C3,
+ * i2c3m0's GPIO2_A6/A7 belong to a controller that is already spoken for, and
+ * i2c0 and i2c2 do not reach the header at all. Spending 17 and 11 on two more
+ * plain GPIOs would cost the board its only spare bus, and plain GPIOs are the
+ * one thing this header still has in quantity.
  *
- * Three changes from stock:
+ * So the controller stays enabled with its muxing declared: two pads that
+ * nothing else may use, in exchange for a bus that needs no kernel rebuild to
+ * exist. A rebuild means a reflash, on hardware that will be in a rack.
  *
- *   - status okay. Stock leaves it disabled, so there is no /dev/i2c-1.
+ * Three points about the node itself:
+ *
+ *   - status okay. Stock leaves it disabled, so there would be no /dev/i2c-1.
  *     The alias in rv1106.dtsi (`i2c1 = &i2c1`) fixes the node number, which
  *     is NOT probe order — i2c-rk3x.c takes adap.nr from of_alias_get_id().
  *
- *   - 400 kHz instead of 100. The Si5351A takes it, and it keeps all three
- *     buses on one number.
+ *   - 400 kHz instead of 100, so all three controllers read the same and
+ *     whatever eventually lands here inherits the number the AVRs set.
  *
- *   - pinctrl-0 declared explicitly. M1 is already the stock default, so this
- *     changes nothing today — it is written down because M1 is the ONLY muxing
- *     of i2c1 that reaches the header (M0 is GPIO0_A5/A6, bank 0, not broken
- *     out), so there is no fallback if it ever moved.
+ *   - pinctrl-0 = i2c1m1_xfer. The -ipc.dtsi already picks M1, but rv1106.dtsi
+ *     picks M0 — GPIO0_A5/A6, bank 0, not broken out — and M1 is the ONLY
+ *     muxing of i2c1 that reaches the header. Declaring it here means a change
+ *     in the vendor dtsi cannot silently move this bus onto pins that do not
+ *     exist on the module.
  *
- * Pull-ups are external, a 4.7 kOhm pair on this segment. Nothing else sits on
- * it, so there is no translator and no second pair.
+ * An enabled controller with no slaves is inert: i2c-rk3x drives the bus only
+ * while a transfer is in flight and nothing issues one. Note that the group is
+ * pcfg_pull_none and the carrier fits no pull-up pair here, so the two pads
+ * float — which is a reason to fit the resistors together with the first
+ * device, not a reason to disable the controller.
  */
 &i2c1 {
 	status = "okay";
@@ -239,25 +271,43 @@
 };
 
 /*
- * i2c4 M0 — bus B, the second mux and slots 4..7. GPIO2_A1 = SCL (pin 25),
- * GPIO2_A0 = SDA (pin 24): adjacent pads on the right-hand row, so this trunk
- * leaves the module on the opposite side from bus A and neither has to cross
- * the board.
+ * i2c4 M1 — bus B: the second mux with slots 4..7, and the Si5351A.
+ * GPIO1_C2 = SCL (pin 15), GPIO1_C3 = SDA (pin 16): adjacent pads on the
+ * left-hand row of the header — pins 1..20, which is the row that faces the
+ * slots on ducoCarrier_r0, the same row bus A leaves from.
  *
- * **This file used to protect these two pins, and now spends them.** An earlier
- * revision deleted a latent claim on GPIO2_A0/A1 — the -ipc.dtsi declares
+ * **SCL is on the LOWER pin number here, and only here.** i2c4_scl_m1 is
+ * <1 RK_PC2 4> and i2c4_sda_m1 is <1 RK_PC3 4> in rv1106-pinctrl.dtsi. Every
+ * other pair this board could have used runs SCL-high: i2c3m1 10/9, i2c1m1
+ * 17/11, i2c4m0 25/24. Nothing in the kernel notices — the wiring does. This
+ * is the one place on the header where "SCL is the odd/lower pin" reasoning
+ * gives the wrong answer.
+ *
+ * Three things hang off this controller: the PCA9306 that translates up to the
+ * 5 V trunk, the second TCA9546A behind it, and the Si5351A directly on the
+ * 3.3 V side. The clock cannot take a 5 V pull-up (V_IHI2C max 3.6 V, VDDI2C
+ * 2.25 to 3.63 V), so it lives on the untranslated half where the pull-ups go
+ * to 3.3 V, and it never sees the mux at all.
+ *
+ * **This node used to select M0, and those two pads are free again.** M0 is
+ * GPIO2_A1/A0 = header 25/24, on the edge-facing row. Bus B moved to the
+ * slot-facing row so the trunk leaves the module beside the slots it feeds
+ * instead of crossing the board, and 24/25 went back to the free list along
+ * with the rest of GPIO2_A0..A3 — nothing on ducoCarrier_r0 uses any of them
+ * now.
+ *
+ * pinctrl-1 stays deleted, and it is worth restating why now that the pins it
+ * named are free rather than in use. The -ipc.dtsi declares
  * `pinctrl-names = "default", "conifg"` (the typo is upstream's) with
- * `pinctrl-1 = <&i2c4m0_xfer>`, which nothing ever selects: the pinctrl core
+ * `pinctrl-1 = <&i2c4m0_xfer>`, a state nothing ever selects: the pinctrl core
  * applies only "default" at probe, i2c-rk3x.c makes no pinctrl_lookup_state()
- * call, and no driver in this tree looks that name up. The objection was never
- * to using the pins, it was to a *hidden* claim on them. This is an explicit
- * one, which is the distinction that block already drew for uart1m1 on
- * GPIO2_A4/A5. pinctrl-1 is still deleted so the typo'd state cannot come back
- * and double-claim the same group.
+ * call, and no driver in this tree looks that name up. Inert — but it is a
+ * *hidden* claim on GPIO2_A0/A1, and deleting the property is what makes those
+ * pads free by construction instead of by argument about driver internals.
  *
- * The carrier's MUXRST_A / MUXRST_B — the GPIOs that force both muxes' channels
- * open when a wedged AVR has jammed a trunk — moved to GPIO1_C0 (pin 12) and
- * GPIO1_C1 (pin 14), both free, to make room here.
+ * The pinctrl-0 line is a real override in both directions: the -ipc.dtsi's
+ * "default" is i2c4m2_xfer (GPIO3_C7/D0, bank 3, not broken out), so this drops
+ * a muxing that goes nowhere and names the one that goes to the header.
  *
  * The two camera sensors the -ipc.dtsi hangs off this bus are switched off.
  * There is no camera on ducoCarrier_r0, and their addresses — 0x30 and 0x31 —
@@ -265,7 +315,7 @@
  * is asking for a confusing bus dump. Neither driver is in
  * luckfox_rv1106_linux_defconfig, so nothing would have bound to them in any
  * case; this makes the DTS agree with the kernel config rather than relying on
- * that. Same reasoning as the SARADC block below.
+ * that. Same reasoning as the SARADC block above.
  *
  * They are **disabled, not deleted**: csi_dphy's endpoints hold phandles to
  * &sc3336_out and &mis5001_out, and deleting the nodes breaks those references.
@@ -275,7 +325,7 @@
 	status = "okay";
 	clock-frequency = <400000>;
 	pinctrl-names = "default";
-	pinctrl-0 = <&i2c4m0_xfer>;
+	pinctrl-0 = <&i2c4m1_xfer>;
 	/delete-property/ pinctrl-1;
 };
 
@@ -289,42 +339,106 @@
 
 /**********PWM**********/
 /*
- * The eight AVR clocks. Left `disabled` here — enabling them belongs with the
- * clock-generator work — but the muxing is narrowed NOW, because the -ipc.dtsi
- * hands four of these controllers TWO pin sets each and the Luckfox
- * documentation is explicit that only one may be active per controller:
- * "PWM functionality can only be used by one pin at a time".
+ * No PWM controller is enabled on this board, and two of them no longer have a
+ * pad left to be narrowed onto.
  *
- * Left as stock, enabling pwm5/6/10 would ALSO mux GPIO2_B0, GPIO2_B1 and
- * GPIO1_D1 — three header pins that ducoCarrier_r0 counts as free, and a PWM
- * carrier appearing on a pin nobody expects.
+ * The narrowing exists because the -ipc.dtsi hands four PWM controllers TWO
+ * pin sets each while the Luckfox documentation is explicit that only one may
+ * be live: "PWM functionality can only be used by one pin at a time". Naming
+ * one set stops the second pad being muxed away the moment the controller
+ * probes.
  *
- *   pwm5  -> m2 = GPIO1_C2   (m1 would be GPIO2_B0)
- *   pwm6  -> m2 = GPIO1_C3   (m1 would be GPIO2_B1)
- *   pwm10 -> m1 = GPIO1_C6   (m2 would be GPIO1_D1)
+ * **pwm5 and pwm6 no longer have a set to name.** Both of their pads are now
+ * I²C on ducoCarrier_r0:
  *
- * pwm2/3/4/8/9 already declare a single set and need nothing. pwm11 is left
- * alone: the carrier does not use it.
+ *   pwm5  m1 = GPIO2_B0 (i2c1 SCL, pin 17)   m2 = GPIO1_C2 (i2c4 SCL, pin 15)
+ *   pwm6  m1 = GPIO2_B1 (i2c1 SDA, pin 11)   m2 = GPIO1_C3 (i2c4 SDA, pin 16)
+ *
+ * There is no third muxing for either, so narrowing them to either set would
+ * be aiming a clock output at an I²C line — a narrowing that reads like a
+ * safety measure and is the opposite. The overrides are deleted rather than
+ * rewritten: both nodes are `status = "disabled"` in rv1106.dtsi and nothing
+ * here enables them, CONFIG_PWM_ROCKCHIP is not in
+ * luckfox_rv1106_linux_defconfig, and pinctrl is applied at driver bind — so
+ * the stock two-set claim they fall back to is inert twice over.
+ * **Enabling pwm5 or pwm6 on this carrier is the landmine.** If an extra clock
+ * output is ever wanted, take it from the Si5351A: CLK2 is unused.
+ *
+ * pwm10 keeps its narrowing, because for pwm10 the choice is still a choice:
+ * m1 = GPIO1_C6 (header 5) and m2 = GPIO1_D1 (header 20) are both free pads,
+ * and one set is what the hardware allows.
+ *
+ * pwm0/2/3/4/8/9 declare a single set each and need nothing here, and pwm11
+ * keeps its stock pair — but four of those sets do land on pads this board
+ * uses, pwm11m2 (GPIO1_D3) on bus A's SCL among them. They stay because a
+ * disabled node claims nothing; they are catalogued in the pin-claim audit
+ * below so that "just enable a PWM" is never a one-line change.
  */
-&pwm5 {
-	pinctrl-0 = <&pwm5m2_pins>;
-};
-
-&pwm6 {
-	pinctrl-0 = <&pwm6m2_pins>;
-};
-
 &pwm10 {
 	pinctrl-0 = <&pwm10m1_pins>;
 };
 
+/**********PIN CLAIMS — WHAT ELSE NAMES THE CARRIER'S PADS**********/
+/*
+ * Every pad ducoCarrier_r0 uses is also named by at least one other node in
+ * this include chain. None of those claims is live: every claimant in the two
+ * tables below is `status = "disabled"`, and pinctrl is applied at driver bind,
+ * so a disabled node muxes nothing. Most have no driver in
+ * luckfox_rv1106_linux_defconfig either — there is no CONFIG_PWM_ROCKCHIP, no
+ * CONFIG_SPI, no CONFIG_FB_TFT. The one claim that is not status-gated is at
+ * the end of this block.
+ *
+ * The list matters anyway, because it is what turns "just enable that
+ * controller" into a decision. Read off the built DTB, not the sources:
+ *
+ *   pin 10  GPIO1_D3  bus A SCL      also pwm11m2_pins
+ *   pin  9  GPIO1_D2  bus A SDA      also pwm0m1_pins
+ *   pin 15  GPIO1_C2  bus B SCL      also pwm5m2_pins, spi0m0_mosi
+ *   pin 16  GPIO1_C3  bus B SDA      also pwm6m2_pins, spi0m0_miso,
+ *                                    and fbtft@0's reset-gpios
+ *   pin 17  GPIO2_B0  i2c1 SCL, held free
+ *                                    also pwm5m1_pins, uart0m1_xfer,
+ *                                    and fbtft@0's led-gpios
+ *   pin 11  GPIO2_B1  i2c1 SDA, held free
+ *                                    also pwm6m1_pins, uart0m1_xfer,
+ *                                    and fbtft@0's dc-gpios
+ *
+ * And the three pins the master drives as plain GPIO from userspace:
+ *
+ *   pin  7  GPIO1_C4  INT_N, the wired-OR alert from the eight expanders
+ *                                    also uart4m1_xfer, pwm8m1_pins
+ *   pin 12  GPIO1_C0  MUX_0_RST_TRG  also spi0m0_cs0, pwm2m2_pins
+ *   pin 19  GPIO1_D0  MUX_1_RST_TRG  also uart3m1_xfer, pwm3m2_pins
+ *
+ * Both RST_TRG lines drive the GATE of an N-FET that pulls the mux's
+ * active-low RESET down, so **the GPIO is asserted HIGH to reset the mux** —
+ * the FET inverts, and the mux's own pin never sees the 3.3 V rail. That
+ * inversion belongs in the master, not here; it is written down because a DTS
+ * reader looking for an active-low line will not find one.
+ *
+ * spi0 deserves its own line: spi0m0 claims GPIO1_C0/C1/C2/C3 = header 12, 14,
+ * 15 and 16 — the mux A reset trigger, one genuinely free pin, and BOTH of bus
+ * B's pads. It is the single node in this tree that would do the most damage if
+ * it were ever enabled, which is why it is explicitly disabled above rather
+ * than left to the vendor default.
+ *
+ * One claim is NOT gated by a status property: the -ipc.dtsi declares a
+ * root-level `dht11_sensor` node with `pinctrl-0 = <&gpio1_pc7>` and
+ * `gpios = <&gpio1 RK_PC7 ...>` — header pin 4, which this board counts free.
+ * The node has no `status`, so it defaults to okay, and it survives into the
+ * built DTB. What actually stops it is that CONFIG_DHT11 is absent, so nothing
+ * binds and no pinctrl state is ever applied. Left alone because nothing on the
+ * carrier wants pin 4, but it is the one latent claim here that a kernel-config
+ * change could wake without anybody touching a device tree.
+ */
+
 /**********UART**********/
-/* UART3_M1 */
+/* UART3_M1 — GPIO1_D0/D1, header 19 and 20. Pin 19 is MUX_1_RST_TRG. */
 &uart3 {
 	status = "disabled";
 };
 
-/* UART4_M1 */
+/* UART4_M1 — GPIO1_C4/C5, header 7 and 6. Pin 7 is INT_N. */
 &uart4 {
 	status = "disabled";
 };
