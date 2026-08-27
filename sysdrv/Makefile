@@ -687,16 +687,31 @@ drv: prepare
 	@echo -e "$(C_GREEN) ==sysdrv== build drv $(C_NORMAL)"
 	@-rm -rf $(SYSDRV_KERNEL_MOD_PATH) $(KERNEL_DIR_DRV_KO)
 	@-mkdir -p $(SYSDRV_KERNEL_MOD_PATH)
-	$(MAKE) -C $(KERNEL_DIR) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -j$(SYSDRV_JOBS) \
-			O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) \
-		modules
-	$(MAKE) -C $(KERNEL_DIR) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -j$(SYSDRV_JOBS) \
-		O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) \
-		modules_install INSTALL_MOD_STRIP=1 \
-		INSTALL_MOD_PATH=$(KERNEL_DIR_DRV_KO)
-	$(AT)find $(KERNEL_DIR_DRV_KO)/lib/modules/*/kernel \
-		-name "*.ko" -type f -exec cp -fav {} $(SYSDRV_KERNEL_MOD_PATH) \;
-	@test ! -d drv_ko || ($(MAKE) O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) -C $(SYSDRV_DIR)/drv_ko KERNEL_DRV_KO_INSTALL_PATH=$(SYSDRV_KERNEL_MOD_PATH))
+# DUCO PATCH: this whole step is conditional now. Our kernel defconfig sets
+# `# CONFIG_MODULES is not set` on purpose — see its own header, "the build
+# produces ZERO .ko files" — and stock `drv` ran `make modules` unconditionally,
+# so `./build.sh` died at build_rootfs with "The present kernel configuration
+# has modules disabled". That failure was latent from the day the lean kernel
+# landed (2026-08-08): the kernel target still worked, so boot.img looked
+# current while rootfs.img and sd_update.img stayed months old. Found 2026-08-21
+# trying to build a fresh SD image.
+#
+# Re-enabling CONFIG_MODULES would undo a deliberate decision to make the SDK
+# happy. Making the SDK tolerate a modules-less kernel is the right direction.
+	@if grep -q "^CONFIG_MODULES=y" $(SYSDRV_KERNEL_OBJS_OUTPUT_DIR)/.config 2>/dev/null; then \
+		set -e; \
+		$(MAKE) -C $(KERNEL_DIR) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -j$(SYSDRV_JOBS) \
+			O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) modules; \
+		$(MAKE) -C $(KERNEL_DIR) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -j$(SYSDRV_JOBS) \
+			O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) modules_install INSTALL_MOD_STRIP=1 \
+			INSTALL_MOD_PATH=$(KERNEL_DIR_DRV_KO); \
+		find $(KERNEL_DIR_DRV_KO)/lib/modules/*/kernel \
+			-name "*.ko" -type f -exec cp -fav {} $(SYSDRV_KERNEL_MOD_PATH) \; ; \
+		test ! -d drv_ko || $(MAKE) O=$(SYSDRV_KERNEL_OBJS_OUTPUT_DIR) \
+			-C $(SYSDRV_DIR)/drv_ko KERNEL_DRV_KO_INSTALL_PATH=$(SYSDRV_KERNEL_MOD_PATH); \
+	else \
+		echo " ==sysdrv== CONFIG_MODULES is not set: no .ko to build, skipping."; \
+	fi
 	$(call MAROC_COPY_PKG_TO_SYSDRV_OUTPUT, $(OUTPUT_ROOTFS_SOURCE_DIR), $(SYSDRV_KERNEL_MOD_PATH), SELF)
 
 drv_clean:
