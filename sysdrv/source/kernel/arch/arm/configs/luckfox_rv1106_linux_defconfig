@@ -11,7 +11,6 @@
 #   Ethernet     stmmac + rk630 phy. The master's only link to the pool, and
 #                the only way in.
 #   MMC/SD       it boots from the SD card.
-#   RTC          Rockchip RTC + the CR2032 on VBAT; S99rtcinit and busybox ntpd.
 #   thermal      per-chip load and throttling decisions read it.
 #   watchdog     an unattended miner head.
 #   cpufreq+OPP+PVTM   the governor is pinned to performance by S10cpu-performance.
@@ -46,6 +45,17 @@
 # STRIPPED, with the reason it has no user:
 #   MODULES      the build produces ZERO .ko files. The module loader was
 #                infrastructure for nothing.
+#   RTC          the whole class, not just the Rockchip driver. The CR2032 on
+#                VBAT was removed from the board on 2026-08-21 and the head
+#                keeps time by NTP alone, so there is nothing to read at boot
+#                and nothing to write back. Its two users went with it:
+#                S99rtcinit (which set 2024-01-01 on every 1969 it saw — and
+#                with no battery it would have seen 1969 every boot) and
+#                ntpd-hook.sh's `hwclock -wu`. CONFIG_SUSPEND is already off,
+#                so no wakeup path wanted an alarm either.
+#                What makes this safe: S49ntpd runs `ntpd -N` with no `-x`, and
+#                busybox ntpd STEPS on its first good reply, so an offset of
+#                decades is corrected at once rather than never.
 #   all of USB   host and gadget. Nothing composes a gadget on this image —
 #                rndis.sh is in the SDK but is not referenced by this
 #                BoardConfig and is not in the built rootfs — so usb0 never
@@ -237,8 +247,7 @@ CONFIG_LEDS_CLASS=y
 CONFIG_LEDS_GPIO=y
 CONFIG_LEDS_TRIGGERS=y
 CONFIG_LEDS_TRIGGER_HEARTBEAT=y
-CONFIG_RTC_CLASS=y
-CONFIG_RTC_DRV_ROCKCHIP=y
+# CONFIG_RTC_CLASS is not set
 CONFIG_DMADEVICES=y
 CONFIG_PL330_DMA=y
 # CONFIG_VIRTIO_MENU is not set

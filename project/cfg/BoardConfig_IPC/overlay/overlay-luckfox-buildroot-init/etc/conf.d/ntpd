@@ -5,4 +5,18 @@
 # on all LAN VLANs and DNATs it to the local stratum-1 (192.168.200.4
 # et al.) with symmetric masquerade — so replies come back with the
 # pool IP preserved, keeping ntpd happy.
-NTPD_OPTS="-S /usr/sbin/ntpd-hook.sh -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org -p 3.pool.ntp.org"
+# NTP ONLY since 2026-08-21: the RTC battery is removed, so there is no
+# RTC to keep. Two things went with it:
+#
+#   * `-S /usr/sbin/ntpd-hook.sh`, whose whole job was `hwclock -wu` to mirror
+#     the synced time back into the RTC. Writing to a battery-less RTC is
+#     writing to something that forgets at power-off.
+#   * `S99rtcinit`, which was worse than useless. It did `date -s 2024-01-01`
+#     whenever it read 1969 from the RTC — and with no battery it reads 1969
+#     EVERY boot, so every boot would have come up claiming January 2024. A
+#     wrong-but-plausible date is harder to spot in a log than an obvious 1970.
+#
+# What makes NTP-only sufficient: S49ntpd runs `ntpd -N` with no `-x`, and
+# busybox ntpd STEPS the clock on its first good reply rather than slewing, so
+# an offset of decades is corrected at once instead of never.
+NTPD_OPTS="-p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org -p 3.pool.ntp.org"
