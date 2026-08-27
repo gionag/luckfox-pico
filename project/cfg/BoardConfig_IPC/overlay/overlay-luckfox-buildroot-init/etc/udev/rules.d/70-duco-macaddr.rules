@@ -1,0 +1,8 @@
+# Give the head a stable MAC the moment the interface appears.
+#
+# udev and not an init script: eth0 arrives through stmmac's deferred probe,
+# measured at t+73.9 s on 2026-08-27 -- well after S40network ran. Ordering by
+# S-number cannot catch an interface that does not exist yet.
+#
+# See /usr/sbin/duco-macaddr for why U-Boot cannot do this itself.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="eth*", RUN+="/usr/sbin/duco-macaddr %k"

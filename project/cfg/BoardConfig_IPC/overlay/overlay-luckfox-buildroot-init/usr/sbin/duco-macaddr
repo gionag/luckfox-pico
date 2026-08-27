@@ -1,0 +1,96 @@
+#!/bin/sh
+# duco-macaddr — give the head a MAC address that survives a reboot.
+#
+# WHY THIS EXISTS
+# ---------------
+# U-Boot hands the kernel a NEW RANDOM MAC on every single boot, so the head
+# gets a new DHCP lease every time and no static reservation can ever hold.
+# That is not a misconfiguration, it is what the code does:
+# arch/arm/mach-rockchip/board.c rockchip_set_ethaddr() reads LAN_MAC_ID from
+# Rockchip "vendor storage" and falls back to net_random_ethaddr() -- and both
+# the read and the write-back sit inside #ifdef CONFIG_ROCKCHIP_VENDOR_PARTITION,
+# which our U-Boot defconfig does not set. With it unset `ret` keeps its
+# -EINVAL initialiser, so the fallback is taken unconditionally, forever, on
+# any boot medium.
+#
+# Enabling that option is NOT the fix. Vendor storage on a block device lives
+# at a hard-coded sector offset, EMMC_VENDOR_PART_OFFSET = 1024*7 = sector
+# 7168, and in our SD layout the boot partition spans sectors 1600..67136 --
+# so U-Boot would write factory data into the middle of the kernel FIT. The
+# offset is a #define, not a knob.
+#
+# Nothing else on this board wants vendor storage: the remaining consumers are
+# HDCP keys, e-ink VCOM, sensor calibration and the USB-loader flow, none of
+# which exist here. So the MAC is the whole problem, and it is solved cleanly
+# one level up -- here.
+#
+# WHAT IT DOES
+# ------------
+# Derives a stable MAC from the SoC's own serial number, which is burned in
+# the chip and unique per board. Same board, same MAC, every boot; two boards
+# never collide. The address is forced locally-administered and unicast, which
+# is correct for an address nobody bought an OUI for.
+#
+# Invoked by udev when the interface appears -- NOT from an init script. The
+# interface shows up LATE (measured at t+73.9 s on 2026-08-27) because stmmac
+# reaches probe through the deferred-probe retry, long after S40network has
+# run. An ordering by S-number cannot catch that; an event can.
+set -eu
+
+IFACE="${1:-eth0}"
+
+say() {
+  logger -t duco-macaddr "$1" 2>/dev/null || true
+  [ -t 1 ] && echo "$1" || true
+}
+
+SERIAL=$(tr -d '\000' < /proc/device-tree/serial-number 2>/dev/null || true)
+if [ -z "$SERIAL" ]; then
+  say "❌ no /proc/device-tree/serial-number; leaving $IFACE as it is"
+  exit 0
+fi
+
+# sha256 so the MAC does not expose the serial verbatim and so short or
+# similar serials still spread across the space. 12 hex chars = 6 octets.
+H=$(printf 'duco-mac:%s' "$SERIAL" | sha256sum | cut -c1-12)
+
+O1=$(printf '%s' "$H" | cut -c1-2)
+O2=$(printf '%s' "$H" | cut -c3-4)
+O3=$(printf '%s' "$H" | cut -c5-6)
+O4=$(printf '%s' "$H" | cut -c7-8)
+O5=$(printf '%s' "$H" | cut -c9-10)
+O6=$(printf '%s' "$H" | cut -c11-12)
+
+# Locally administered (bit 1 set), unicast (bit 0 clear). Without this the
+# derived first octet could claim an OUI we do not own, or set the multicast
+# bit -- which the kernel refuses outright.
+O1=$(printf '%02x' "$(( (0x$O1 | 0x02) & 0xfe ))")
+
+MAC="$O1:$O2:$O3:$O4:$O5:$O6"
+
+CURRENT=$(cat "/sys/class/net/$IFACE/address" 2>/dev/null || true)
+if [ "$CURRENT" = "$MAC" ]; then
+  say "✅ $IFACE already $MAC"
+  exit 0
+fi
+
+# The address can only be changed while the link is down. Note whether it was
+# already up, so an interface something else had brought up (dhcpcd does, once
+# it sees it on netlink) is handed back in the state we found it.
+WAS_UP=0
+if ip link show "$IFACE" 2>/dev/null | head -1 | grep -q "[<,]UP[,>]"; then
+  WAS_UP=1
+fi
+
+ip link set "$IFACE" down 2>/dev/null || true
+if ip link set "$IFACE" address "$MAC" 2>/dev/null; then
+  say "✅ $IFACE: $CURRENT → $MAC (from SoC serial $SERIAL)"
+else
+  say "❌ $IFACE: could not set $MAC, keeping $CURRENT"
+fi
+
+if [ "$WAS_UP" = 1 ]; then
+  ip link set "$IFACE" up 2>/dev/null || true
+fi
+
+exit 0
