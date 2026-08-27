@@ -2509,6 +2509,60 @@ function post_overlay() {
 	chown -R 0:0 "$RK_PROJECT_PACKAGE_ROOTFS_DIR" 2>/dev/null || true
 }
 
+# Strip the vendor IPC/camera stack out of the assembled rootfs.
+#
+# This board is a mining head, not an IP camera, and the kernel is MONOLITHIC
+# (CONFIG_MODULES is off, the build produces zero .ko). The vendor's application
+# stack assumes neither of those things, so on every boot it produced a wall of
+# errors that had nothing to do with us -- and a wall of errors is worse than
+# noise: it hides the next real fault. Established on hardware 2026-08-27, where
+# it took a serial console to find a silent ethernet failure inside that wall.
+#
+# An overlay cannot do this: overlays add files, they cannot remove them. So it
+# happens here, after post_overlay and before mkfs.ext4 freezes the image.
+function strip_vendor_ipc_stack() {
+	local root="$RK_PROJECT_PACKAGE_ROOTFS_DIR"
+	[ -d "$root" ] || return 0
+
+	# S21appinit is the single entry point for all of it: it runs
+	#   sh /oem/usr/bin/RkLunch.sh
+	# which calls insmod_ko.sh, and that is the source of every `lsmod:
+	# /proc/modules: No such file or directory`, every "kernel does not support
+	# requested operation" on a .ko, the rkipc.ini complaints and the
+	# /oem/usr/www symlink failures.
+	#
+	# S50usbdevice configures a USB gadget through /sys/kernel/config. USB and
+	# configfs are both out of the kernel, so it fails on every single line.
+	# NOTE: this also means there is no RNDIS fallback at 172.32.0.93 any more.
+	#
+	# S50telnet offers root over telnet with a default password. The head sits
+	# on the IoT VLAN; ssh is already up from S50sshd.
+	#
+	# S99_auto_reboot is a Rockchip FACTORY SOAK harness: if it finds
+	# /oem/rockchip_test/auto_reboot.sh it copies it to /data/cfg and sources it
+	# in the background to reboot the board in a loop. Inert only as long as
+	# that path stays empty, which is not a property worth depending on for a
+	# rack that is supposed to stay up.
+	local script
+	for script in S21appinit S50usbdevice S50telnet S99_auto_reboot; do
+		if [ -e "$root/etc/init.d/$script" ]; then
+			echo " ==duco== removing vendor init script: $script"
+			rm -f "$root/etc/init.d/$script"
+		fi
+	done
+
+	# And the tree those scripts existed to launch: ~18 MB on a 112 MB rootfs,
+	# of which oem/usr/ko is .ko files that can never load. It lands in the
+	# rootfs rather than its own partition because
+	# RK_BUILD_APP_TO_OEM_PARTITION is deliberately not set in the BoardConfig.
+	# Nothing of ours references /oem -- the master, duco-flash and the selftest
+	# are installed to /usr/bin by software/master_cluster/deploy.sh.
+	if [ -d "$root/oem" ]; then
+		echo " ==duco== removing vendor /oem tree ($(/usr/bin/du -sh "$root/oem" 2>/dev/null | cut -f1))"
+		rm -rf "$root/oem"
+	fi
+}
+
 function __RUN_PRE_BUILD_OEM_SCRIPT() {
 	local tmp_path
 	tmp_path=$(realpath $BOARD_CONFIG)
@@ -2565,6 +2619,7 @@ function build_firmware() {
 
 	__RUN_POST_BUILD_SCRIPT
 	post_overlay
+	strip_vendor_ipc_stack
 
 	if [ -n "$GLOBAL_INITRAMFS_BOOT_NAME" ]; then
 		build_mkimg boot $RK_PROJECT_PACKAGE_ROOTFS_DIR

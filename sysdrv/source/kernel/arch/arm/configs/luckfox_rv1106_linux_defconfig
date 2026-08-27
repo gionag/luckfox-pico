@@ -56,6 +56,12 @@
 #                What makes this safe: S49ntpd runs `ntpd -N` with no `-x`, and
 #                busybox ntpd STEPS on its first good reply, so an offset of
 #                decades is corrected at once rather than never.
+#                ⚠️ THIS REMOVAL BROKE ETHERNET, and took until 2026-08-27 to
+#                find. RTC_NVMEM defaults to RTC_CLASS and is the only thing in
+#                this tree that `select NVMEM`; losing NVMEM discarded
+#                ROCKCHIP_OTP, and the gmac's "bgs" cell then never resolved, so
+#                stmmac deferred forever in total silence. CONFIG_NVMEM=y is now
+#                asked for explicitly further down — see the note there.
 #   all of USB   host and gadget. Nothing composes a gadget on this image —
 #                rndis.sh is in the SDK but is not referenced by this
 #                BoardConfig and is not in the built rootfs — so usb0 never
@@ -271,6 +277,17 @@ CONFIG_RK_CONSOLE_THREAD=y
 CONFIG_FIQ_DEBUGGER_FIQ_GLUE=y
 CONFIG_ROCKCHIP_NPOR_POWERGOOD=y
 CONFIG_DEVFREQ_GOV_USERSPACE=y
+# NVMEM must be asked for EXPLICITLY, and the reason is a trap worth naming.
+# ROCKCHIP_OTP lives inside `if NVMEM`, and NVMEM is a bool with no default
+# ("if unsure, say no"). Nothing here selects it on purpose: until 2026-08-21 it
+# arrived for free, because RTC_NVMEM `select NVMEM` and defaults to RTC_CLASS.
+# Dropping the RTC therefore dropped NVMEM, which silently discarded the
+# CONFIG_ROCKCHIP_OTP=y below -- and that killed ETHERNET, because the gmac node
+# wants an nvmem cell "bgs" and the internal PHY wants "txlevel". With no
+# provider stmmac defers its probe forever and prints NOTHING: no eth0, no line
+# in dmesg. Cost one bring-up session on 2026-08-27. Do not remove this line
+# just because nothing appears to reference NVMEM.
+CONFIG_NVMEM=y
 CONFIG_ROCKCHIP_OTP=y
 CONFIG_EXT4_FS=y
 CONFIG_EXPORTFS_BLOCK_OPS=y
