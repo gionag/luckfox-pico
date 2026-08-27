@@ -2561,6 +2561,17 @@ function strip_vendor_ipc_stack() {
 		echo " ==duco== removing vendor /oem tree ($(/usr/bin/du -sh "$root/oem" 2>/dev/null | cut -f1))"
 		rm -rf "$root/oem"
 	fi
+
+	# Our own leftovers. $RK_PROJECT_PACKAGE_ROOTFS_DIR is NEVER cleaned between
+	# builds, so anything we ever put in the wrong place stays in the image
+	# forever unless it is removed by name. 70-duco-macaddr.rules first shipped
+	# to /etc/udev/rules.d, which buildroot udev 220 does not read at all; it
+	# now ships to /lib/udev/rules.d, and without this line the dead copy in
+	# /etc would keep riding along and keep suggesting that /etc works.
+	if [ -e "$root/etc/udev/rules.d/70-duco-macaddr.rules" ]; then
+		echo " ==duco== removing stale /etc/udev/rules.d/70-duco-macaddr.rules"
+		rm -f "$root/etc/udev/rules.d/70-duco-macaddr.rules"
+	fi
 }
 
 function __RUN_PRE_BUILD_OEM_SCRIPT() {

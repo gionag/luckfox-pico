@@ -37,6 +37,14 @@
 # run. An ordering by S-number cannot catch that; an event can.
 set -eu
 
+# udev runs RUN+= with a minimal environment, so nothing here may depend on an
+# inherited PATH. The commands this needs are spread across three directories
+# on this rootfs (ip in /sbin, sha256sum/logger/tr/cut in /usr/bin, cat in
+# /bin), and a lookup that silently fails would leave the MAC untouched while
+# the script still exits 0 -- indistinguishable from success.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 IFACE="${1:-eth0}"
 
 say() {

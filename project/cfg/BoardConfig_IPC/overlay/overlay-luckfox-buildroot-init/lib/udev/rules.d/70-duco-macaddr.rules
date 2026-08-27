@@ -1,0 +1,16 @@
+# Give the head a stable MAC the moment the interface appears.
+#
+# ⚠️ /lib/udev/rules.d AND NOT /etc/udev/rules.d. The conventional place for a
+# local rule is /etc, and it does not work here: this is buildroot's udev 220
+# (eudev), and it reads rules from /lib/udev/rules.d ONLY. Verified on hardware
+# 2026-08-27 -- `udevadm test /sys/class/net/eth0` listed every rules file it
+# read and /etc/udev/rules.d appeared zero times. A rule placed in /etc is
+# silently never loaded, which looks exactly like a rule that does not match.
+# Do not "tidy" this back into /etc.
+#
+# udev and not an init script: eth0 arrives through the stmmac deferred probe,
+# measured at t+73.9 s on a first boot -- well after S40network ran. Ordering
+# by S-number cannot catch an interface that does not exist yet.
+#
+# See /usr/sbin/duco-macaddr for why U-Boot cannot do this itself.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="eth*", RUN+="/usr/sbin/duco-macaddr %k"
