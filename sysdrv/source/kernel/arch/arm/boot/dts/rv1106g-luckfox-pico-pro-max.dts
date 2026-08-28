@@ -416,7 +416,35 @@
  * below so that "just enable a PWM" is never a one-line change.
  */
 &pwm10 {
+	/*
+	 * ENABLED, for the fan. rv1106.dtsi leaves this node disabled and every
+	 * other PWM in the include chain stays that way — see the pin-claim audit
+	 * in hardware/ducoCarrier_r0.md for why "just enable a PWM" is never a
+	 * one-line change on this board.
+	 *
+	 * m1 is GPIO1_C6, header pin 5, and the carrier's netlist confirms where it
+	 * goes: J1.5 -> /FAN_PWM -> Q5 gate (BSS138, source GND, drain to M1 pin 4,
+	 * the fan header's PWM input). R85 pulls the gate down.
+	 *
+	 * SO IT INVERTS, AND THAT IS THE SAFE DIRECTION. A 4-pin fan pulls its PWM
+	 * input up internally and reads duty as time-HIGH, so:
+	 *
+	 *	pin HIGH -> FET conducts -> fan input at GND -> 0 % -> fan stops
+	 *	pin LOW  -> FET off      -> internal pull-up  -> 100 % -> full speed
+	 *
+	 * At boot the SoC pad is an input and R85 holds the gate off, so the fan
+	 * runs FLAT OUT until software says otherwise — which is what a thermal
+	 * device should do when nothing is in control. duco-fan therefore writes
+	 * duty_cycle = period * (1 - wanted), and a duty of 0 means full speed.
+	 *
+	 * TACH is the other half: M1 pin 3 -> /FAN_SPEED -> J1.6 (GPIO1_C5), pulled
+	 * to 3V3 by R86. It is a plain GPIO, counted in software, not a PWM capture.
+	 *
+	 * M1 is do-not-place on r0, so on this board the pad is driven and nothing
+	 * listens. That is harmless and it lets the driver be tested on the bench.
+	 */
 	pinctrl-0 = <&pwm10m1_pins>;
+	status = "okay";
 };
 
 /**********PIN CLAIMS — WHAT ELSE NAMES THE CARRIER'S PADS**********/

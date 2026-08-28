@@ -71,10 +71,16 @@
 #   SPI + SFC    the on-board SPI NAND is a fallback BOOT medium, not something
 #                Linux mounts; without MTD/UBI (already stripped) the SFC could
 #                not expose it anyway.
-#   PWM          checked against the built DTB: no pwm node is status okay and
-#                there is no pwm-regulator. The eight PWM clocks this board was
-#                once going to generate were replaced by an Si5351A on the I2C
-#                trunk.
+#   PWM          KEPT AS OF 2026-08-28 — this entry used to strip it, and the
+#                reason it gave was "no pwm node is status okay", which was true
+#                when it was written and is now false. ducoCarrier_r0 has a 4-pin
+#                fan header on pwm10_m1 (GPIO1_C6 -> Q5, a BSS138 open-drain into
+#                M1 pin 4) and rv1106g-luckfox-pico-pro-max.dts enables that node.
+#                PWM_SYSFS comes with it because duco-fan drives the channel
+#                through /sys/class/pwm; without it the driver binds and userspace
+#                has nothing to write. The eight PWM clocks this board was once
+#                going to generate are still gone — that part of the old note
+#                stands, they were replaced by an Si5351A on the I2C trunk.
 #   IIO/SARADC   no user; the node is disabled in the DTS to match.
 #   I2C_GPIO     bit-banged I2C. The trunk is the hardware controller.
 #   VFAT + NLS   no FAT partition exists: env/idblock/uboot/boot/userdata/rootfs,
@@ -308,6 +314,10 @@ CONFIG_DEBUG_FS=y
 # CONFIG_MODULES is not set
 # CONFIG_USB_SUPPORT is not set
 # CONFIG_SPI is not set
-# CONFIG_PWM is not set
+# PWM for the fan. ROCKCHIP is the only provider on this SoC and SYSFS is what
+# duco-fan writes to; PWM alone builds a subsystem with no way in.
+CONFIG_PWM=y
+CONFIG_PWM_SYSFS=y
+CONFIG_PWM_ROCKCHIP=y
 # CONFIG_IIO is not set
 # CONFIG_VFAT_FS is not set
