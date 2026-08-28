@@ -15,22 +15,51 @@
 };
 
 /**********CRU**********/
-//&cru {
-//	assigned-clocks =
-//		<&cru PLL_GPLL>, <&cru PLL_CPLL>,
-//		<&cru ARMCLK>,
-//		<&cru ACLK_PERI_ROOT>, <&cru HCLK_PERI_ROOT>,
-//		<&cru PCLK_PERI_ROOT>, <&cru ACLK_BUS_ROOT>,
-//		<&cru PCLK_TOP_ROOT>, <&cru PCLK_PMU_ROOT>,
-//		<&cru HCLK_PMU_ROOT>, <&cru CLK_500M_SRC>;
-//	assigned-clock-rates =
-//		<1188000000>, <700000000>,
-//		<1104000000>,
-//		<400000000>, <200000000>,
-//		<100000000>, <300000000>,
-//		<100000000>, <100000000>,
-//		<200000000>, <700000000>;
-//};
+/*
+ * ARMCLK at 1296 MHz instead of the 1104 MHz rv1106.dtsi assigns.
+ *
+ * The head is a single Cortex-A7 and the miner needs about 73% of it before a
+ * dashboard connects, so the clock is real throughput. rv1106.dtsi pins ARMCLK
+ * at 1104 MHz through assigned-clock-rates, and because CONFIG_CPU_FREQ is not
+ * in this kernel nothing ever raises it: the cpu0_opp_table's entries up to
+ * 1608 MHz have no consumer.
+ *
+ * 1296 is the highest OPP the board's fixed supply can hold. vdd_arm on the
+ * Pico Pro Max is a regulator-fixed at 900 mV (see
+ * rv1106-luckfox-pico-pro-max-ipc.dtsi), and the OPP table asks for:
+ *
+ *	1104 MHz  850 mV     1416 MHz  925 mV   <- over 900, out
+ *	1200 MHz  850 mV     1512 MHz  975 mV   <- out
+ *	1296 MHz  875 mV     1608 MHz 1000 mV   <- out
+ *
+ * so 1296 leaves 25 mV of margin and 1416 would be undervolted. Thermally the
+ * head measured 57 C at 1104 MHz against a passive trip at 75 C and critical
+ * at 115 C; +17% of clock at +25 mV is a few degrees.
+ *
+ * The WHOLE list is repeated deliberately. assigned-clocks is a property, not a
+ * merge: naming only ARMCLK here would replace rv1106.dtsi's list outright and
+ * silently drop the PLL and bus-root rates with it. Every value below except
+ * ARMCLK is copied verbatim from rv1106.dtsi.
+ *
+ * CLK_500M_SRC is absent on purpose — it is assigned by rv1106g3.dtsi, which
+ * this board does not include.
+ */
+&cru {
+	assigned-clocks =
+		<&cru PLL_GPLL>, <&cru PLL_CPLL>,
+		<&cru ARMCLK>,
+		<&cru ACLK_PERI_ROOT>, <&cru HCLK_PERI_ROOT>,
+		<&cru PCLK_PERI_ROOT>, <&cru ACLK_BUS_ROOT>,
+		<&cru PCLK_TOP_ROOT>, <&cru PCLK_PMU_ROOT>,
+		<&cru HCLK_PMU_ROOT>;
+	assigned-clock-rates =
+		<1188000000>, <1000000000>,
+		<1296000000>,
+		<400000000>, <200000000>,
+		<100000000>, <300000000>,
+		<100000000>, <100000000>,
+		<200000000>;
+};
 
 /**********NPU**********/
 //&npu {
