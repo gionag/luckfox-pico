@@ -16,7 +16,7 @@
 
 /**********CRU**********/
 /*
- * ARMCLK at 1296 MHz instead of the 1104 MHz rv1106.dtsi assigns.
+ * ARMCLK at 1200 MHz instead of the 1104 MHz rv1106.dtsi assigns.
  *
  * The head is a single Cortex-A7 and the miner needs about 73% of it before a
  * dashboard connects, so the clock is real throughput. rv1106.dtsi pins ARMCLK
@@ -24,17 +24,29 @@
  * in this kernel nothing ever raises it: the cpu0_opp_table's entries up to
  * 1608 MHz have no consumer.
  *
- * 1296 is the highest OPP the board's fixed supply can hold. vdd_arm on the
- * Pico Pro Max is a regulator-fixed at 900 mV (see
+ * vdd_arm on the Pico Pro Max is a regulator-fixed at 900 mV (see
  * rv1106-luckfox-pico-pro-max-ipc.dtsi), and the OPP table asks for:
  *
  *	1104 MHz  850 mV     1416 MHz  925 mV   <- over 900, out
  *	1200 MHz  850 mV     1512 MHz  975 mV   <- out
  *	1296 MHz  875 mV     1608 MHz 1000 mV   <- out
  *
- * so 1296 leaves 25 mV of margin and 1416 would be undervolted. Thermally the
- * head measured 57 C at 1104 MHz against a passive trip at 75 C and critical
- * at 115 C; +17% of clock at +25 mV is a few degrees.
+ * 1296 was tried first, on the reasoning that it is the highest entry the fixed
+ * supply can hold. It ran, but 1200 is the better place to sit and the reason is
+ * the margin: 850 mV against 900 leaves 50 mV, where 1296 leaves 25.
+ *
+ * That margin matters more than it looks because THE BINNING GATE NEVER RUNS.
+ * The OPP voltages are nominal; rockchip's leakage/Pvtm binning adjusts them per
+ * part, and that code lives behind CONFIG_CPU_FREQ, which is not in this kernel.
+ * So nothing here ever discovers that this particular die wants more than the
+ * table's nominal figure — a weak part would simply be undervolted, and an
+ * undervolted A7 does not fail loudly, it computes wrong answers. Since the
+ * clock buys throughput roughly linearly, giving up 7% of it for double the
+ * voltage margin on an unbinned part is the right trade for a machine that is
+ * supposed to run unattended.
+ *
+ * Thermally either is fine: the head measured 57 C at 1104 MHz against a passive
+ * trip at 75 C and critical at 115 C.
  *
  * The WHOLE list is repeated deliberately. assigned-clocks is a property, not a
  * merge: naming only ARMCLK here would replace rv1106.dtsi's list outright and
@@ -54,7 +66,7 @@
 		<&cru HCLK_PMU_ROOT>;
 	assigned-clock-rates =
 		<1188000000>, <1000000000>,
-		<1296000000>,
+		<1200000000>,
 		<400000000>, <200000000>,
 		<100000000>, <300000000>,
 		<100000000>, <100000000>,
