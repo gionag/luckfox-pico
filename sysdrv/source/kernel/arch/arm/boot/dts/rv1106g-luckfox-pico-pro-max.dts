@@ -180,14 +180,21 @@
  * clipped by pin order does, and so does anyone reading the header from the
  * outside. Read the group, not the pin numbering.
  *
- * **The clock generator no longer gets a controller of its own.** The Si5351A
- * sits on bus B's 3.3 V segment, upstream of that trunk's PCA9306, sharing
- * i2c4 with the second mux. What it needed was a bus that never sees a 5 V
- * pull-up — V_IHI2C max is 3.6 V and VDDI2C is specified 2.25 to 3.63 V — and
- * the untranslated half of a translated trunk is exactly that. It costs
- * arbitration the clock was never going to contend for: the Si5351A is written
- * at bring-up and then left alone. That released i2c1's pair; the i2c1 block
- * below says why the controller stays enabled anyway.
+ * **The clock generator DOES get a controller of its own** — this paragraph said
+ * the opposite until 2026-08-28 and it was describing the board as it was before
+ * 2026-08-17.
+ *
+ * The Si5351A used to sit on bus B's 3.3 V segment, upstream of that trunk's
+ * PCA9306, sharing i2c4 with the second mux. What it needed was a bus that never
+ * sees a 5 V pull-up — V_IHI2C max is 3.6 V and VDDI2C is specified 2.25 to
+ * 3.63 V — and the untranslated half of a translated trunk is exactly that.
+ *
+ * What that arrangement cost was found the hard way: one wedged AVR pulling the
+ * 5 V trunk down took the 3.3 V side with it through the PCA9306, so a single
+ * stuck chip removed the TIME BASE FOR ALL EIGHT SLOTS. On 2026-08-17 Y1 moved
+ * to i2c1, which it now has to itself apart from the panel. Verified on the head
+ * 2026-08-28: /proc/iomem lists ff320000.i2c, ff460000.i2c and ff470000.i2c, and
+ * the Si5351A answers at 0x60 on /dev/i2c-1.
  *
  * At 400 kHz with 4.7 kOhm pull-ups none of this is signal integrity: these are
  * open-drain single-ended nets with RC-dominated edges around a microsecond.
@@ -231,11 +238,14 @@
 };
 
 /*
- * I2C1_M1 — enabled, and deliberately connected to nothing. GPIO2_B0 = SCL
- * (pin 17), GPIO2_B1 = SDA (pin 11).
+ * I2C1_M1 — enabled, and it carries the Si5351A (0x60) and the SH1106 panel
+ * (0x3C). GPIO2_B0 = SCL (pin 17), GPIO2_B1 = SDA (pin 11).
  *
- * This bus used to carry the Si5351A; the clock moved onto bus B's 3.3 V
- * segment. The mux-B reset trigger that briefly borrowed pin 17 moved to
+ * "Deliberately connected to nothing" is what this said until 2026-08-28, and it
+ * was true for ten days: the clock had moved off i2c1 onto bus B's 3.3 V segment
+ * and moved BACK on 2026-08-17, when one wedged AVR proved that sharing a
+ * translated trunk costs the time base for all eight slots. The mux-B reset
+ * trigger that briefly borrowed pin 17 moved to
  * GPIO1_D0 (pin 19). Both pads are therefore free on ducoCarrier_r0 — and they
  * are kept free on purpose, because i2c1m1 is the LAST complete I²C pair the
  * header still has. Bus A has taken GPIO1_D2/D3, bus B GPIO1_C2/C3,
@@ -426,11 +436,11 @@
 	 * goes: J1.5 -> /FAN_PWM -> Q5 gate (BSS138, source GND, drain to M1 pin 4,
 	 * the fan header's PWM input). R85 pulls the gate down.
 	 *
-	 * SO IT INVERTS, AND THAT IS THE SAFE DIRECTION. A 4-pin fan pulls its PWM
-	 * input up internally and reads duty as time-HIGH, so:
+	 * SO IT INVERTS, AND THAT IS THE SAFE DIRECTION. R87 (10 kΩ) pulls that
+	 * drain up to +5 V and a 4-pin fan reads duty as time-HIGH, so:
 	 *
 	 *	pin HIGH -> FET conducts -> fan input at GND -> 0 % -> fan stops
-	 *	pin LOW  -> FET off      -> internal pull-up  -> 100 % -> full speed
+	 *	pin LOW  -> FET off      -> R87 pulls to 5 V  -> 100 % -> full speed
 	 *
 	 * At boot the SoC pad is an input and R85 holds the gate off, so the fan
 	 * runs FLAT OUT until software says otherwise — which is what a thermal
