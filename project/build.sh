@@ -1357,7 +1357,24 @@ function __RELEASE_FILESYSTEM_FILES() {
 function __COPY_FILES() {
 	mkdir -p "$2"
 	if [ -d "$1" ]; then
-		cp -rfa $1/* $2
+		# "$1/." and not $1/* — the glob form fails on an EMPTY directory, and
+		# it dies rather than doing nothing: `cp` errors, `trap ERR` fires, and
+		# a 23-minute build is thrown away at the last step.
+		#
+		# That is not hypothetical. kernel_drv_ko/ is created by sysdrv's `drv`
+		# target and then left empty, because this kernel is built with
+		# `# CONFIG_MODULES is not set` and there is nothing to put in it. On a
+		# clean checkout `./build.sh all` therefore could not finish at all.
+		#
+		# It looked fine for three weeks because a working tree that had built
+		# before the lean kernel landed still had seven April .ko files sitting
+		# in staging, which nothing ever cleans — so every "successful" build
+		# since was carrying stale artefacts into the image's /ko, modules for
+		# a kernel that cannot load one.
+		#
+		# "$1/." copies the directory's contents including nothing, and also
+		# picks up dotfiles, which $1/* silently skips.
+		cp -rfa "$1/." "$2"
 	else
 		msg_warn "Please check path [$1] [$2] again"
 	fi
